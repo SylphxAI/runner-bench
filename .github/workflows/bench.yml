@@ -1,0 +1,65 @@
+# The same jobs, timed on two runners. This public repository runs them on
+# GitHub-hosted `ubuntu-latest` (free for public repositories); a private twin
+# runs this exact file with the repository variable BENCH_RUNNER set to
+# `sylphx-linux-standard`. scripts/compare.ts reads both and prints the table.
+# Only schedule and manual runs: no pull_request trigger, so no fork can run
+# code here.
+name: bench
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  # Pickup under a fan-out: six trivial jobs queued at once.
+  pickup:
+    runs-on: ${{ vars.BENCH_RUNNER || 'ubuntu-latest' }}
+    strategy:
+      matrix:
+        n: [1, 2, 3, 4, 5, 6]
+    steps:
+      - run: echo "picked up"
+
+  # Cold Rust release build of a mid-size crate graph.
+  rust:
+    runs-on: ${{ vars.BENCH_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: stable
+      - name: build ripgrep 15.2.0
+        run: |
+          git clone --depth 1 --branch 15.2.0 https://github.com/BurntSushi/ripgrep
+          cd ripgrep
+          cargo build --release --locked
+
+  # JavaScript install and build.
+  bun:
+    runs-on: ${{ vars.BENCH_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.2.20
+      - name: install and build hono v4.13.9
+        run: |
+          git clone --depth 1 --branch v4.13.9 https://github.com/honojs/hono
+          cd hono
+          bun install --frozen-lockfile
+          bun run build
+
+  # Docker image build with no cache.
+  docker:
+    runs-on: ${{ vars.BENCH_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - name: docker build
+        run: |
+          mkdir image && cd image
+          cat > Dockerfile <<'DOCKERFILE'
+          FROM node:22-bookworm-slim
+          RUN apt-get update \
+            && apt-get install -y --no-install-recommends build-essential python3 git \
+            && rm -rf /var/lib/apt/lists/*
+          RUN npm install -g typescript@5.9.3
+          DOCKERFILE
+          docker build --no-cache -t bench:latest .
